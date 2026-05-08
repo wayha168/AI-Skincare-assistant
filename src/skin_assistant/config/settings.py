@@ -43,9 +43,13 @@ def get_settings():
         "skinme_frontend_base_url": skinme_frontend_base_url,
         "skinme_products_path": root / "data" / "skinme_products.csv",
         "product_images_dir": root / "data" / "product_images",
-        # Skin disease / condition images for training (folder or CSV with image_name, condition)
-        "skin_disease_images_dir": root / "data" / "skin_disease_images",
-        "skin_disease_labels_path": root / "data" / "skin_disease_labels.csv",
+        # Unified skin condition training storage:
+        # data/skin_condition_images/<condition>/<image>.jpg for labeled images
+        # data/skin_condition_images/unlabeled/<image>.jpg for user uploads pending label
+        "skin_condition_data_dir": root / "data" / "skin_condition_images",
+        "skin_disease_images_dir": root / "data" / "skin_condition_images",
+        "skin_disease_labels_path": root / "data" / "skin_condition_images" / "labels.csv",
+        "skin_uploads_metadata_path": root / "data" / "skin_condition_images" / "uploads_metadata.csv",
         # Backend integration: Spring URL to forward save requests (persist to DB)
         "backend_url": backend_url.rstrip("/") if backend_url else "",
         # Optional MySQL (skinme_db) for chat "check with database" option

@@ -10,7 +10,7 @@ Training runs **locally** in this project (Python). Your Spring (or other) backe
 |------|----------------|-------------|
 | **Intent model** | Local (`python main.py train`) | `data/intent_training.csv` or built-in examples |
 | **Product text/image models** | Local (`python main.py train-products`) | `data/skinme_products.csv` (from sync) |
-| **Skin condition model** | Local (`python main.py train-skin-condition`) | `data/skin_disease_images/` or CSV |
+| **Skin condition ensemble (2 models)** | Local (`python main.py train-skin-condition`) | `data/skin_condition_images/` (single folder for upload + training) |
 | **API (chat, products, intent)** | Local (`python main.py`) | Trained artifacts + CSV + optional MySQL |
 | **Save chat/feedback to DB** | Your backend | Skin Assistant forwards to `SPRING_BACKEND_URL` |
 
@@ -49,13 +49,21 @@ python main.py train-products
 python main.py train-products --image --epochs 5
 ```
 
-**Skin condition model** (optional; for selfie analysis in the Streamlit app):
+**Skin condition model** (optional; for selfie analysis in API/chat):
 
-- Put images in `data/skin_disease_images/<condition>/` (e.g. `acne/`, `dryness/`) or use `data/skin_disease_labels.csv` (see `data/skin_disease_labels.csv.example`).
+- Use one storage root: `data/skin_condition_images/`.
+- API uploads from `POST /v1/chat/with-image` are auto-saved there:
+  - labeled when `training_label` is sent
+  - otherwise in `unlabeled/` for later labeling
+- For training, keep labeled images in:
+  - `data/skin_condition_images/<condition>/<image>.jpg`
+  - or `data/skin_condition_images/labels.csv` with `image_name,condition`
 
 ```bash
 python main.py train-skin-condition
 ```
+
+This training now builds an ensemble of **at least 2 models** (`resnet18` + `efficientnet_b0`) and reports whether validation reaches the target accuracy (default `0.95`).
 
 ### 2.3 Configure environment for the backend
 

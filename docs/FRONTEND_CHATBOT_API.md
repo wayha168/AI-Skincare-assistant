@@ -95,6 +95,14 @@ Check that the chatbot API is up.
 | user_name | string | No | Same as above |
 | use_llm | boolean | No | Default true |
 | use_database | boolean | No | Default false |
+| training_label | string | No | Optional label (e.g. `acne`) to save uploaded image directly into labeled training folder |
+
+Every uploaded image is now saved automatically to one centralized training folder:
+
+`data/skin_condition_images/`
+
+- If `training_label` is provided: saved to `data/skin_condition_images/<training_label>/...`
+- If no label is provided: saved to `data/skin_condition_images/unlabeled/...` for later labeling
 
 **Example response:**
 

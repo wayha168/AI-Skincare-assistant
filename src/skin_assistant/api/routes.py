@@ -96,19 +96,38 @@ async def chat_with_image(
     user_name: Optional[str] = Form(None, max_length=255),
     use_llm: bool = Form(True),
     use_database: bool = Form(False),
+    training_label: Optional[str] = Form(
+        None,
+        description="Optional condition label to save this image directly in labeled training folder.",
+    ),
     image: UploadFile = File(...),
 ) -> ChatWithImageResponse:
     """Send a message with a skin image; we analyze the image and reply with recommendations.
     Message can be empty (we'll ask what to recommend). Turn is saved to DB if session_id is set and MySQL configured."""
     image_analysis = None
+    saved_training_path = None
     effective_message = (message or "").strip() or "What do you recommend for my skin?"
     try:
-        from skin_assistant.models.skin_condition_trainer import predict_skin_condition_from_image
+        from skin_assistant.models.skin_condition_trainer import (
+            predict_skin_condition_from_image,
+            save_uploaded_skin_image_for_training,
+        )
     except ImportError:
         predict_skin_condition_from_image = None
-    if predict_skin_condition_from_image:
-        try:
-            contents = await image.read()
+        save_uploaded_skin_image_for_training = None
+    try:
+        contents = await image.read()
+        if save_uploaded_skin_image_for_training:
+            saved = save_uploaded_skin_image_for_training(
+                image_bytes=contents,
+                original_filename=image.filename or "",
+                user_message=effective_message,
+                session_id=session_id,
+                condition_label=training_label,
+            )
+            if saved:
+                saved_training_path = str(saved)
+        if predict_skin_condition_from_image:
             from PIL import Image
             import io
             img = Image.open(io.BytesIO(contents)).convert("RGB")
@@ -116,10 +135,14 @@ async def chat_with_image(
             if condition:
                 image_analysis = f"{condition} ({conf:.0%})"
                 effective_message = f"From my skin photo the condition appears to be {condition}. {effective_message}"
-        except Exception:
-            pass
-        finally:
-            await image.close()
+                if saved_training_path:
+                    effective_message += (
+                        " The uploaded image has been saved for future training."
+                    )
+    except Exception:
+        pass
+    finally:
+        await image.close()
     if session_id and _chat_repo.is_available():
         db_history = _chat_repo.get_history(session_id, limit=20)
         image_history = [{"role": r["role"], "content": r["content"] or ""} for r in db_history]
@@ -135,7 +158,9 @@ async def chat_with_image(
         user_content = (message or "Analyze my skin").strip() or "What do you recommend?"
         _chat_repo.save_message(
             session_id, "user",
-            user_content + (f" [Image analyzed: {image_analysis}]" if image_analysis else ""),
+            user_content
+            + (f" [Image analyzed: {image_analysis}]" if image_analysis else "")
+            + (f" [Saved for training: {saved_training_path}]" if saved_training_path else ""),
             image_analysis=image_analysis,
             user_id=user_id, user_email=user_email, user_name=user_name,
         )
