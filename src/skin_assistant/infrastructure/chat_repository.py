@@ -58,6 +58,9 @@ def _ensure_tables(conn) -> bool:
                     role VARCHAR(32) NOT NULL,
                     content TEXT NOT NULL,
                     image_analysis VARCHAR(255) NULL,
+                    image_path VARCHAR(1024) NULL,
+                    image_filename VARCHAR(255) NULL,
+                    training_label VARCHAR(128) NULL,
                     is_ai_response TINYINT(1) NOT NULL DEFAULT 0,
                     sender VARCHAR(255) NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -80,6 +83,18 @@ def _ensure_tables(conn) -> bool:
                 pass
             try:
                 cur.execute("ALTER TABLE chat_ai ADD COLUMN sender VARCHAR(255) NULL")
+            except Exception:
+                pass
+            try:
+                cur.execute("ALTER TABLE chat_ai ADD COLUMN image_path VARCHAR(1024) NULL")
+            except Exception:
+                pass
+            try:
+                cur.execute("ALTER TABLE chat_ai ADD COLUMN image_filename VARCHAR(255) NULL")
+            except Exception:
+                pass
+            try:
+                cur.execute("ALTER TABLE chat_ai ADD COLUMN training_label VARCHAR(128) NULL")
             except Exception:
                 pass
         conn.commit()
@@ -179,6 +194,9 @@ class ChatRepository:
         role: str,
         content: str,
         image_analysis: Optional[str] = None,
+        image_path: Optional[str] = None,
+        image_filename: Optional[str] = None,
+        training_label: Optional[str] = None,
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         user_name: Optional[str] = None,
@@ -204,13 +222,16 @@ class ChatRepository:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "INSERT INTO chat_ai (user_id, session_id, role, content, image_analysis, is_ai_response, sender) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                    "INSERT INTO chat_ai (user_id, session_id, role, content, image_analysis, image_path, image_filename, training_label, is_ai_response, sender) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (
                         uid[:36],
                         session_id[:128],
                         role[:32],
                         content[:65535],
                         (image_analysis or "")[:255] or None,
+                        (image_path or "")[:1024] or None,
+                        (image_filename or "")[:255] or None,
+                        (training_label or "")[:128] or None,
                         is_ai,
                         sender[:255] if sender else None,
                     ),
@@ -237,7 +258,7 @@ class ChatRepository:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT role, content, image_analysis, created_at FROM chat_ai WHERE session_id = %s ORDER BY id ASC LIMIT %s",
+                    "SELECT role, content, image_analysis, image_path, image_filename, training_label, created_at FROM chat_ai WHERE session_id = %s ORDER BY id ASC LIMIT %s",
                     (session_id[:128], limit),
                 )
                 rows = cur.fetchall()

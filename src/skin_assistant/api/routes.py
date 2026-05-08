@@ -26,6 +26,23 @@ _chat = ChatService(repo=_repo)
 _chat_repo = ChatRepository()
 
 
+def _staff_style_image_fallback_intro(user_message: str) -> str:
+    """Human-style fallback text when image model is not ready yet."""
+    base = (
+        "Thank you for sharing your photo. I want to help you like a real SkinMe staff member.\n\n"
+        # "I cannot reliably assess the skin condition from the image yet because the image-analysis model is still being trained. "
+        "To guide you safely, please tell me these first:\n"
+        "• What is your main concern right now (acne, redness, dryness, irritation, dark spots)?\n"
+        "• Which area is affected and how long has it been happening?\n"
+        "• Is your skin sensitive or reacting to any recent product?\n\n"
+        "Once you share this, I will give you a more personal routine and product suggestions."
+    )
+    msg = (user_message or "").strip()
+    if msg:
+        return base + f"\n\nYou wrote: \"{msg}\""
+    return base
+
+
 def _forward_to_backend(path: str, payload: dict) -> bool:
     """POST payload to Spring (or other) backend for saving to database. Returns True if backend responded 2xx."""
     base = get_settings().backend_url
@@ -154,6 +171,8 @@ async def chat_with_image(
         use_llm=use_llm,
         use_database=use_database,
     )
+    if not image_analysis:
+        reply = _staff_style_image_fallback_intro(message or effective_message) + "\n\n" + reply
     if session_id and _chat_repo.is_available():
         user_content = (message or "Analyze my skin").strip() or "What do you recommend?"
         _chat_repo.save_message(
@@ -162,6 +181,9 @@ async def chat_with_image(
             + (f" [Image analyzed: {image_analysis}]" if image_analysis else "")
             + (f" [Saved for training: {saved_training_path}]" if saved_training_path else ""),
             image_analysis=image_analysis,
+            image_path=saved_training_path,
+            image_filename=image.filename or None,
+            training_label=training_label,
             user_id=user_id, user_email=user_email, user_name=user_name,
         )
         _chat_repo.save_message(
