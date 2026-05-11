@@ -531,6 +531,8 @@ Continue the conversation naturally. When they ask for products within a budget,
 
 When the user mentions a skin problem but does NOT ask for products and context is thin, you may ask brief, human follow-up questions.
 
+When the customer sent a skin photo (a separate instruction block may say so), reply like an in-store SkinMe colleague: warm, specific, practical. Never mention machine learning, model training, datasets, image analysis, confidence scores, algorithms, or how the system works technically. Never say you cannot see the image if the instruction says they uploaded one—treat it as a normal consultation and focus on care steps plus products from the reference list.
+
 Language: Reply in English or in Khmer (ភាសាខ្មែរ), matching the customer. If they write in Khmer, reply entirely in Khmer. If they write in English, reply in English. If they switch language, follow them. If they ask you to respond in Khmer (in words or in Khmer), use Khmer. A separate instruction block may tell you which language to use for this turn—follow it. Keep ingredient and product names from the reference as printed when they are Latin; translate your own explanations and advice into the customer language."""
 
 
@@ -792,7 +794,12 @@ class ChatService:
         )
 
     def reply_with_llm(
-        self, user_message: str, conversation_history: list[dict], use_database: bool = False
+        self,
+        user_message: str,
+        conversation_history: list[dict],
+        use_database: bool = False,
+        retrieval_query: Optional[str] = None,
+        llm_extra_instruction: Optional[str] = None,
     ) -> str:
         api_key = _gemini_api_key()
         if not api_key:
@@ -807,7 +814,8 @@ class ChatService:
                 user_message, use_database=use_database, conversation_history=conversation_history
             )
 
-        search_query = _search_text_for_knowledge(user_message, conversation_history)
+        query_for_search = (retrieval_query or user_message).strip() or user_message
+        search_query = _search_text_for_knowledge(query_for_search, conversation_history)
         concern_type = _detect_concern_type(search_query)
         use_db = use_database or _is_recommendation_request(user_message) or _is_recommendation_request(search_query)
         ing_hits = self._repo.search_ingredients(search_query, 6)
@@ -886,6 +894,8 @@ class ChatService:
             f"Reference information (do not quote source labels to the user):\n{context}\n\n"
             f"User message:\n{user_message}"
         )
+        if llm_extra_instruction and llm_extra_instruction.strip():
+            blocks.append(llm_extra_instruction.strip())
         if _prefer_khmer_reply(user_message, conversation_history):
             blocks.append(
                 "Language for this reply: Khmer (ភាសាខ្មែរ). Write the entire reply in natural, polite Khmer "
@@ -905,7 +915,7 @@ class ChatService:
                 config=genai_types.GenerateContentConfig(
                     system_instruction=system,
                     max_output_tokens=640,
-                    temperature=0.7 if concern_first else 0.55,
+                    temperature=0.72 if llm_extra_instruction else (0.7 if concern_first else 0.55),
                 ),
             )
             text = (getattr(resp, "text", None) or "").strip()
@@ -923,14 +933,25 @@ class ChatService:
         conversation_history: Optional[list[dict]] = None,
         use_llm: bool = True,
         use_database: bool = False,
+        retrieval_query: Optional[str] = None,
+        llm_extra_instruction: Optional[str] = None,
     ) -> str:
         """
         Prefer Gemini for the final reply when enabled (natural, person-like prose with retrieval context).
         Fall back to canned follow-ups + retrieval only when LLM is off or no API key.
+
+        retrieval_query: optional string used only for ingredient/product lookup (e.g. merge skin hint + user text).
+        llm_extra_instruction: optional staff-only guidance appended to the LLM prompt (not shown to user verbatim).
         """
         history = conversation_history or []
         if use_llm and _llm_enabled():
-            return self.reply_with_llm(user_message, history, use_database=use_database)
+            return self.reply_with_llm(
+                user_message,
+                history,
+                use_database=use_database,
+                retrieval_query=retrieval_query,
+                llm_extra_instruction=llm_extra_instruction,
+            )
         followup = _get_concern_followup(user_message, history)
         if followup:
             return followup

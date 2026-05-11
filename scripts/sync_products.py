@@ -120,8 +120,11 @@ def do_sync(
     if not no_sync:
         stats = sync_products_to_csv(csv_path=csv_path, overwrite_existing=overwrite_existing)
         print("Sync:", stats)
+        if stats.get("error"):
+            print("Warning:", stats.get("message", stats.get("error")))
         if csv_path.exists():
-            print(f"CSV: {csv_path} ({stats['total']} products)" + (" (left existing)" if stats.get("skipped") else ""))
+            total = int(stats.get("total", 0) or 0)
+            print(f"CSV: {csv_path} ({total} products)" + (" (left existing)" if stats.get("skipped") else ""))
         else:
             print("No CSV written; sync failed or no data.")
             return 1

@@ -143,6 +143,7 @@ def fetch_products(api_url: Optional[str] = None, timeout: int = 30) -> list[dic
     """
     Fetch all products from SkinMe API. Returns list of normalized product dicts.
     Uses requests (JSON API); use bs4 only when scraping HTML pages.
+    Raises requests.RequestException on network failure, ValueError on bad JSON shape.
     """
     url = api_url or get_settings().skinme_api_url
     resp = requests.get(url, timeout=timeout)
@@ -173,27 +174,57 @@ def sync_products_to_csv(
     overwrite_existing: bool = False,
 ) -> dict:
     """
-    Fetch products from API. Write CSV only if it does not exist or is empty, unless overwrite_existing=True.
-    Returns stats: total, added, removed, path, skipped (True if existing data was left as-is).
+    Fetch products from API when needed. If overwrite_existing=False and a non-empty CSV
+    already exists, skips the network call entirely.
+
+    Write CSV when: overwrite_existing=True, or no CSV, or CSV is empty — and fetch succeeds.
+
+    Returns stats: total, added, removed, path, skipped, optional error/message.
     """
     settings = get_settings()
     csv_path = csv_path or settings.skinme_products_path
-    products = fetch_products(api_url=api_url)
     old_df = load_existing_csv(csv_path)
+
+    if not overwrite_existing and csv_path.exists() and not old_df.empty:
+        return {
+            "total": len(old_df),
+            "added": 0,
+            "removed": 0,
+            "path": str(csv_path),
+            "skipped": True,
+            "message": "CSV already exists; left as-is. Run sync with overwrite to refresh.",
+        }
+
+    try:
+        products = fetch_products(api_url=api_url)
+    except requests.RequestException as e:
+        n_existing = len(old_df) if not old_df.empty else 0
+        return {
+            "total": n_existing,
+            "added": 0,
+            "removed": 0,
+            "path": str(csv_path),
+            "skipped": bool(n_existing),
+            "error": type(e).__name__,
+            "message": f"Product API unreachable ({str(e)}). Using existing CSV if present.",
+        }
+    except ValueError as e:
+        n_existing = len(old_df) if not old_df.empty else 0
+        return {
+            "total": n_existing,
+            "added": 0,
+            "removed": 0,
+            "path": str(csv_path),
+            "skipped": bool(n_existing),
+            "error": "ValueError",
+            "message": str(e),
+        }
+
     old_ids = set(old_df["id"].astype(str).unique()) if not old_df.empty and "id" in old_df.columns else set()
     new_ids = {str(p["id"]) for p in products}
     added = len(new_ids - old_ids)
     removed = len(old_ids - new_ids)
 
-    if not overwrite_existing and csv_path.exists() and not old_df.empty:
-        return {
-            "total": len(old_df),
-            "added": added,
-            "removed": removed,
-            "path": str(csv_path),
-            "skipped": True,
-            "message": "CSV already exists; left as-is. Run sync with overwrite to refresh.",
-        }
     products_to_csv(products, csv_path)
     return {
         "total": len(products),

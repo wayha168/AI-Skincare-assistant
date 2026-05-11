@@ -1,6 +1,0 @@
-product_name,brand,ingredients,clean_ingredients,skin_type,concerns,ingredient_function
-Hydrating Cleanser,CeraVe,"Water, Glycerin, Ceramide NP, Hyaluronic Acid","glycerin ceramide hyaluronic_acid","dry,sensitive","hydration","moisturizing"
-Acne Control Gel,La Roche-Posay,"Salicylic Acid, Alcohol, Niacinamide","salicylic_acid niacinamide","oily,acne","acne","exfoliating anti-acne"
-Vitamin C Serum,The Ordinary,"Ascorbic Acid, Propylene Glycol","vitamin_c","all","brightening","antioxidant"
-Moisturizing Cream,Nivea,"Glycerin, Panthenol, Mineral Oil","glycerin panthenol","dry","hydration","moisturizing"
-Sunscreen SPF50,Biore,"Zinc Oxide, Titanium Dioxide","zinc_oxide titanium_dioxide","all","sun protection","uv protection"

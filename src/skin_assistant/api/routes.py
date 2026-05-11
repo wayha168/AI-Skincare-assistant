@@ -26,21 +26,14 @@ _chat = ChatService(repo=_repo)
 _chat_repo = ChatRepository()
 
 
-def _staff_style_image_fallback_intro(user_message: str) -> str:
-    """Human-style fallback text when image model is not ready yet."""
-    base = (
-        "Thank you for sharing your photo. I want to help you like a real SkinMe staff member.\n\n"
-        # "I cannot reliably assess the skin condition from the image yet because the image-analysis model is still being trained. "
-        "To guide you safely, please tell me these first:\n"
-        "• What is your main concern right now (acne, redness, dryness, irritation, dark spots)?\n"
-        "• Which area is affected and how long has it been happening?\n"
-        "• Is your skin sensitive or reacting to any recent product?\n\n"
-        "Once you share this, I will give you a more personal routine and product suggestions."
-    )
-    msg = (user_message or "").strip()
-    if msg:
-        return base + f"\n\nYou wrote: \"{msg}\""
-    return base
+def _condition_from_image_analysis(image_analysis: str) -> str:
+    """Strip trailing '(NN%)' confidence suffix from classifier label."""
+    s = (image_analysis or "").strip()
+    if not s:
+        return ""
+    if " (" in s and s.endswith(")"):
+        return s.rsplit(" (", 1)[0].strip()
+    return s
 
 
 def _forward_to_backend(path: str, payload: dict) -> bool:
@@ -123,7 +116,7 @@ async def chat_with_image(
     Message can be empty (we'll ask what to recommend). Turn is saved to DB if session_id is set and MySQL configured."""
     image_analysis = None
     saved_training_path = None
-    effective_message = (message or "").strip() or "What do you recommend for my skin?"
+    user_text = (message or "").strip() or "What do you recommend for my skin?"
     try:
         from skin_assistant.models.skin_condition_trainer import (
             predict_skin_condition_from_image,
@@ -138,7 +131,7 @@ async def chat_with_image(
             saved = save_uploaded_skin_image_for_training(
                 image_bytes=contents,
                 original_filename=image.filename or "",
-                user_message=effective_message,
+                user_message=user_text,
                 session_id=session_id,
                 condition_label=training_label,
             )
@@ -151,11 +144,6 @@ async def chat_with_image(
             condition, conf = predict_skin_condition_from_image(img)
             if condition:
                 image_analysis = f"{condition} ({conf:.0%})"
-                effective_message = f"From my skin photo the condition appears to be {condition}. {effective_message}"
-                if saved_training_path:
-                    effective_message += (
-                        " The uploaded image has been saved for future training."
-                    )
     except Exception:
         pass
     finally:
@@ -165,14 +153,44 @@ async def chat_with_image(
         image_history = [{"role": r["role"], "content": r["content"] or ""} for r in db_history]
     else:
         image_history = []
+
+    cond_label = _condition_from_image_analysis(image_analysis) if image_analysis else ""
+    if cond_label:
+        retrieval_query = f"{cond_label} skin concern gentle care moisturizer serum cleanser {user_text}"
+        llm_extra = (
+            "The customer uploaded a skin photo. Internal screening suggests their concern may lean toward: "
+            f"{cond_label}. Reply as a warm SkinMe store colleague: acknowledge their message and photo naturally, "
+            "offer brief practical care tips in plain language (no diagnosis), then recommend a few products from the "
+            "reference list by exact name and price. Do not mention models, training, datasets, percentages, or "
+            "\"image analysis\"."
+        )
+    else:
+        retrieval_query = (
+            f"gentle hydrating calming skin barrier cleanser serum moisturizer sensitive skin {user_text}"
+        )
+        llm_extra = (
+            "The customer uploaded a skin photo along with their message. Reply as a warm SkinMe store colleague: "
+            "thank them for the photo, respond to what they wrote, ask one short caring question if their concern is "
+            "still unclear, and suggest a few suitable products from the reference list (hydration, barrier support, "
+            "gentle cleansing) using exact names and prices. Do not mention AI, machine learning, model training, "
+            "datasets, or technical screening."
+        )
+
+    message_for_model = user_text
+    if not use_llm:
+        if cond_label:
+            message_for_model = f"My skin may relate to {cond_label}. {user_text}".strip()
+        else:
+            message_for_model = f"I shared a skin photo. {user_text}".strip()
+
     reply = _chat.get_reply(
-        effective_message,
+        message_for_model,
         conversation_history=image_history,
         use_llm=use_llm,
         use_database=use_database,
+        retrieval_query=retrieval_query,
+        llm_extra_instruction=llm_extra,
     )
-    if not image_analysis:
-        reply = _staff_style_image_fallback_intro(message or effective_message) + "\n\n" + reply
     if session_id and _chat_repo.is_available():
         user_content = (message or "Analyze my skin").strip() or "What do you recommend?"
         _chat_repo.save_message(

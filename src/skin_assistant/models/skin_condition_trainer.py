@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import io
 import uuid
 from datetime import datetime, timezone
@@ -128,15 +129,21 @@ def _build_model(model_name: str, num_classes: int):
     if model_name == "resnet18":
         try:
             model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-        except AttributeError:
-            model = models.resnet18(pretrained=True)
+        except Exception:
+            try:
+                model = models.resnet18(pretrained=True)
+            except Exception:
+                model = models.resnet18(weights=None)
         model.fc = torch.nn.Linear(model.fc.in_features, num_classes)
         return model
     if model_name == "efficientnet_b0":
         try:
             model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1)
-        except AttributeError:
-            model = models.efficientnet_b0(pretrained=True)
+        except Exception:
+            try:
+                model = models.efficientnet_b0(pretrained=True)
+            except Exception:
+                model = models.efficientnet_b0(weights=None)
         in_features = model.classifier[1].in_features
         model.classifier[1] = torch.nn.Linear(in_features, num_classes)
         return model
@@ -244,14 +251,16 @@ def train_skin_condition_classifier(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     criterion = torch.nn.CrossEntropyLoss()
 
-    def train_one_model(model_name: str) -> Tuple[Path, float]:
+    def train_one_model(model_name: str) -> Tuple[Path, float, List[Dict[str, float]]]:
         model = _build_model(model_name=model_name, num_classes=num_classes).to(device)
         opt = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
 
         best_acc = 0.0
         best_state = None
-        for _ in range(epochs):
+        history: List[Dict[str, float]] = []
+        for epoch in range(1, epochs + 1):
             model.train()
+            train_correct, train_total = 0, 0
             for xs, ys in train_loader:
                 xs, ys = xs.to(device), ys.to(device)
                 opt.zero_grad()
@@ -259,6 +268,9 @@ def train_skin_condition_classifier(
                 loss = criterion(out, ys)
                 loss.backward()
                 opt.step()
+                pred = out.argmax(dim=1)
+                train_correct += int((pred == ys).sum().item())
+                train_total += int(ys.size(0))
 
             model.eval()
             correct, total = 0, 0
@@ -269,7 +281,15 @@ def train_skin_condition_classifier(
                     pred = out.argmax(dim=1)
                     correct += int((pred == ys).sum().item())
                     total += int(ys.size(0))
+            train_acc = float(train_correct / train_total) if train_total else 0.0
             acc = float(correct / total) if total else 0.0
+            history.append(
+                {
+                    "epoch": float(epoch),
+                    "train_accuracy": train_acc,
+                    "validation_accuracy": acc,
+                }
+            )
             if acc >= best_acc:
                 best_acc = acc
                 best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
@@ -284,16 +304,44 @@ def train_skin_condition_classifier(
                 "num_classes": num_classes,
                 "validation_accuracy": best_acc,
                 "target_accuracy": target_accuracy,
+                "history": history,
             },
             out_path,
         )
-        return out_path, best_acc
+        return out_path, best_acc, history
 
     model_results: Dict[str, Dict[str, object]] = {}
+    history_by_model: Dict[str, List[Dict[str, float]]] = {}
     ensemble_models = ["resnet18", "efficientnet_b0"]
     for model_name in ensemble_models:
-        out_path, acc = train_one_model(model_name)
+        out_path, acc, history = train_one_model(model_name)
         model_results[model_name] = {"model_path": str(out_path), "validation_accuracy": acc}
+        history_by_model[model_name] = history
+
+    history_csv_path = output_dir / "skin_condition_training_history.csv"
+    with history_csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["model_name", "epoch", "train_accuracy", "validation_accuracy"])
+        for model_name, history in history_by_model.items():
+            for item in history:
+                writer.writerow(
+                    [
+                        model_name,
+                        int(item["epoch"]),
+                        item["train_accuracy"],
+                        item["validation_accuracy"],
+                    ]
+                )
+
+    history_json_path = output_dir / "skin_condition_training_history.json"
+    history_payload = {
+        "epochs": epochs,
+        "samples": len(image_paths),
+        "num_classes": num_classes,
+        "classes": list(id_to_label.values()),
+        "models": history_by_model,
+    }
+    history_json_path.write_text(json.dumps(history_payload, indent=2), encoding="utf-8")
 
     avg_acc = float(sum(float(v["validation_accuracy"]) for v in model_results.values()) / len(model_results))
     meets_target = avg_acc >= target_accuracy
@@ -307,6 +355,8 @@ def train_skin_condition_classifier(
         "ensemble_validation_accuracy": avg_acc,
         "meets_target_accuracy": meets_target,
         "models": model_results,
+        "history_csv": str(history_csv_path),
+        "history_json": str(history_json_path),
         "note": (
             "Current validation accuracy is below target. Add more balanced, clean labeled data "
             "to reach >=95% consistently."
