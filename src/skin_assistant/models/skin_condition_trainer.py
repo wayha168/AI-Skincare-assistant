@@ -4,7 +4,9 @@ from __future__ import annotations
 import csv
 import json
 import io
+import re
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -13,6 +15,39 @@ import pandas as pd
 from PIL import Image
 
 from skin_assistant.config import get_settings
+
+
+def _extract_skin_label_from_filename(filename: str) -> Optional[str]:
+    stem = Path(filename).stem.strip().lower()
+    if not stem:
+        return None
+    stem = re.sub(r"\s+copy(?:\s*\d*)?$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"^(?:t|v|cv|x|y|z)[-_]?\d+[_-]?#?", "", stem)
+    stem = re.sub(r"^\d+[_-]?", "", stem)
+    stem = re.sub(r"[-_]+", " ", stem)
+    stem = re.sub(r"\d+", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip()
+    if not stem:
+        return None
+    tokens = [tok for tok in stem.split() if tok]
+    if not tokens:
+        return None
+    return "_".join(tokens[:2])
+
+
+def _collect_image_labels_from_flat_folder(images_dir: Path) -> Tuple[List[str], List[str]]:
+    paths, labels = [], []
+    if not images_dir.exists():
+        return paths, labels
+    for f in sorted(images_dir.iterdir()):
+        if not f.is_file() or f.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+            continue
+        label = _extract_skin_label_from_filename(f.name)
+        if not label:
+            continue
+        paths.append(str(f))
+        labels.append(label)
+    return paths, labels
 
 
 def _collect_image_labels_from_folders(images_dir: Path) -> Tuple[List[str], List[str]]:
@@ -24,7 +59,7 @@ def _collect_image_labels_from_folders(images_dir: Path) -> Tuple[List[str], Lis
         if not subdir.is_dir():
             continue
         condition = subdir.name
-        for f in subdir.iterdir():
+        for f in sorted(subdir.iterdir()):
             if f.suffix.lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
                 paths.append(str(f))
                 labels.append(condition)
@@ -178,19 +213,45 @@ def train_skin_condition_classifier(
     output_dir = output_dir or settings.models_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    fallback_dir = settings.project_root / "data" / "skin-dataset-images"
+    if (not images_dir or not images_dir.exists()) and fallback_dir.exists():
+        images_dir = fallback_dir
+
     if labels_csv and Path(labels_csv).exists():
         image_paths, image_labels = _collect_image_labels_from_csv(
             Path(labels_csv), images_dir, image_col=image_col, condition_col=condition_col
         )
     else:
         image_paths, image_labels = _collect_image_labels_from_folders(images_dir)
+        if not image_paths and fallback_dir.exists() and fallback_dir != images_dir:
+            images_dir = fallback_dir
+            image_paths, image_labels = _collect_image_labels_from_folders(images_dir)
+        if not image_paths:
+            image_paths, image_labels = _collect_image_labels_from_flat_folder(images_dir)
 
     if len(image_paths) < 2 or len(set(image_labels)) < 2:
         return {
-            "error": "Need at least 2 images and 2 classes. Use folder structure data/skin_condition_images/<condition>/*.jpg or CSV with image_name, condition.",
+            "error": "Need at least 2 images and 2 classes. Use folder structure data/skin_condition_images/<condition>/*.jpg, CSV with image_name, condition, or a flat labeled dataset in data/skin-dataset-images.",
             "hint_images_dir": str(images_dir),
             "hint_csv": str(labels_csv or settings.skin_disease_labels_path),
         }
+
+    label_counts = Counter(image_labels)
+    filtered_labels = {label for label, count in label_counts.items() if count >= 2}
+    if len(filtered_labels) < 2:
+        return {
+            "error": "Found image labels but too few labels with at least 2 examples each. Add more labeled images or consolidate rare classes.",
+            "hint_images_dir": str(images_dir),
+            "hint_csv": str(labels_csv or settings.skin_disease_labels_path),
+        }
+    filtered_data = [(p, l) for p, l in zip(image_paths, image_labels) if l in filtered_labels]
+    if not filtered_data:
+        return {
+            "error": "No valid labeled images after filtering. Ensure filenames encode a condition label or use a labels CSV.",
+            "hint_images_dir": str(images_dir),
+            "hint_csv": str(labels_csv or settings.skin_disease_labels_path),
+        }
+    image_paths, image_labels = zip(*filtered_data)
 
     label_to_id = {v: i for i, v in enumerate(sorted(set(image_labels)))}
     id_to_label = {i: v for v, i in label_to_id.items()}
@@ -229,13 +290,31 @@ def train_skin_condition_classifier(
 
     all_indices = list(range(len(image_paths)))
     val_size = max(1, int(0.2 * len(all_indices)))
-    split = random_split(
-        all_indices,
-        [len(all_indices) - val_size, val_size],
-        generator=torch.Generator().manual_seed(42),
-    )
-    train_indices = [all_indices[i] for i in split[0].indices]
-    val_indices = [all_indices[i] for i in split[1].indices]
+    try:
+        from sklearn.model_selection import train_test_split
+
+        stratify_labels = [labels_ids[i] for i in all_indices]
+        if len(set(stratify_labels)) >= 2 and min(Counter(stratify_labels).values()) >= 2:
+            train_indices, val_indices = train_test_split(
+                all_indices,
+                test_size=val_size,
+                random_state=42,
+                stratify=stratify_labels,
+            )
+        else:
+            train_indices, val_indices = train_test_split(
+                all_indices,
+                test_size=val_size,
+                random_state=42,
+            )
+    except Exception:
+        split = random_split(
+            all_indices,
+            [len(all_indices) - val_size, val_size],
+            generator=torch.Generator().manual_seed(42),
+        )
+        train_indices = [all_indices[i] for i in split[0].indices]
+        val_indices = [all_indices[i] for i in split[1].indices]
 
     train_paths = [image_paths[i] for i in train_indices]
     train_labels = [labels_ids[i] for i in train_indices]

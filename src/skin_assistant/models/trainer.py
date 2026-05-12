@@ -49,18 +49,61 @@ def build_pipeline() -> Pipeline:
     )
 
 
+def _find_intent_training_csv(csv_path: Optional[Path] = None) -> Optional[Path]:
+    settings = get_settings()
+    if csv_path and csv_path.exists():
+        return Path(csv_path)
+    primary = settings.data_dir / "intent_training.csv"
+    if primary.exists():
+        return primary
+    example = settings.data_dir / "intent_training.csv.example"
+    if example.exists():
+        return example
+    return None
+
+
+def _augment_intent_examples_from_ingredients() -> list[tuple[str, str]]:
+    settings = get_settings()
+    path = settings.ingredients_path
+    if not path.exists():
+        return []
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return []
+    if "name" not in df.columns:
+        return []
+    examples = []
+    for ingredient in df["name"].dropna().astype(str).str.strip().unique().tolist()[:200]:
+        if not ingredient:
+            continue
+        examples.append((f"what is {ingredient}", "ingredient_info"))
+        examples.append((f"tell me about {ingredient}", "ingredient_info"))
+    return examples
+
+
 def load_training_data(csv_path: Optional[Path] = None) -> tuple[list[str], list[int]]:
     """
     Load training data. If csv_path exists, expect columns 'text' and 'intent'.
-    Otherwise use DEFAULT_TRAINING_DATA.
+    Otherwise use a data/ CSV fallback or built-in defaults.
     """
-    if csv_path and csv_path.exists():
-        df = pd.read_csv(csv_path)
-        texts = df["text"].astype(str).tolist()
-        intents = df["intent"].map(INTENT_LABEL_TO_ID).tolist()
-        return texts, intents
-    texts = [t for t, _ in DEFAULT_TRAINING_DATA]
-    intents = [INTENT_LABEL_TO_ID[l] for _, l in DEFAULT_TRAINING_DATA]
+    source_path = _find_intent_training_csv(csv_path)
+    if source_path:
+        df = pd.read_csv(source_path)
+        if "text" in df.columns and "intent" in df.columns:
+            texts = df["text"].astype(str).tolist()
+            intents = df["intent"].map(INTENT_LABEL_TO_ID).tolist()
+        else:
+            texts = []
+            intents = []
+    else:
+        texts = [t for t, _ in DEFAULT_TRAINING_DATA]
+        intents = [INTENT_LABEL_TO_ID[l] for _, l in DEFAULT_TRAINING_DATA]
+    if source_path and source_path.name.endswith(".example"):
+        extra = _augment_intent_examples_from_ingredients()
+        for text, label in extra:
+            texts.append(text)
+            intents.append(INTENT_LABEL_TO_ID[label])
     return texts, intents
 
 

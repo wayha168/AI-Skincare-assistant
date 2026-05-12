@@ -12,12 +12,35 @@ from skin_assistant.config import get_settings
 
 
 def load_skinme_products(csv_path: Optional[Path] = None) -> pd.DataFrame:
-    """Load SkinMe products CSV (from sync)."""
+    """Load SkinMe products CSV from available data files."""
     settings = get_settings()
-    path = csv_path or settings.skinme_products_path
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_csv(path)
+    candidates = []
+    if csv_path:
+        candidates.append(Path(csv_path))
+    candidates.extend([settings.skinme_products_path, settings.products_path])
+    for path in candidates:
+        if path and path.exists():
+            df = pd.read_csv(path)
+            if not df.empty:
+                df.attrs["source_csv_path"] = str(path)
+                return df
+    return pd.DataFrame()
+
+
+def _resolve_text_columns(df: pd.DataFrame, label_column: str) -> tuple[pd.DataFrame, str]:
+    if "name" not in df.columns and "product_name" in df.columns:
+        df = df.copy()
+        df["name"] = df["product_name"].astype(str)
+    if label_column not in df.columns:
+        if label_column == "productType" and "product_type" in df.columns:
+            label_column = "product_type"
+        elif label_column == "category_name" and "category_name" in df.columns:
+            label_column = "category_name"
+        elif "product_type" in df.columns:
+            label_column = "product_type"
+        elif "category_name" in df.columns:
+            label_column = "category_name"
+    return df, label_column
 
 
 def train_product_type_from_text(
@@ -42,9 +65,10 @@ def train_product_type_from_text(
     output_dir.mkdir(parents=True, exist_ok=True)
     df = load_skinme_products(products_csv)
     if df.empty:
-        return {"error": "No product CSV found. Run sync_products first."}
+        return {"error": "No product CSV found. Run sync_products first or add a products CSV to data/."}
+    df, label_column = _resolve_text_columns(df, label_column)
     if "name" not in df.columns or label_column not in df.columns:
-        return {"error": f"CSV must have 'name' and '{label_column}' columns."}
+        return {"error": f"CSV must have a text column ('name' or 'product_name') and a label column like '{label_column}'."}
     # Build text: name + description
     df = df.dropna(subset=[label_column])
     df["_text"] = (df["name"].fillna("") + " " + df.get("description", pd.Series("")).fillna("")).str.strip()

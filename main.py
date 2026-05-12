@@ -346,6 +346,12 @@ def main() -> int:
         default="",
         help="train-skin-condition: optional CSV path with columns image_name,condition (images relative to --skin-images).",
     )
+    parser.add_argument(
+        "--skin-output-dir",
+        type=str,
+        default="",
+        help="train-skin-condition: optional output directory for checkpoints and training history files.",
+    )
     args = parser.parse_args()
 
     print_header("Skinme AI", "Skin Assistant - Ingredients & Product Recommendations")
@@ -395,18 +401,22 @@ def main() -> int:
             args.skin_images,
             args.skin_labels_csv,
         )
+        skin_output_dir = Path(args.skin_output_dir).expanduser().resolve() if args.skin_output_dir else None
         if skin_dataset_note:
             print_info(skin_dataset_note)
         if skin_images_dir:
             print_key_value("Skin images", str(skin_images_dir))
         if skin_labels_csv:
             print_key_value("Skin labels CSV", str(skin_labels_csv))
+        if skin_output_dir:
+            print_key_value("Skin output dir", str(skin_output_dir))
         print_line()
         return run_train_skin_condition(
             epochs=args.epochs,
             batch_size=args.batch_size,
             images_dir=skin_images_dir,
             labels_csv=skin_labels_csv,
+            output_dir=skin_output_dir,
         )
     return 0
 
