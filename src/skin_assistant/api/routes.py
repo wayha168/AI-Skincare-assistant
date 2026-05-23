@@ -1,13 +1,23 @@
 """FastAPI route handlers for Skin Assistant API."""
+import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Query, UploadFile
 
+from skin_assistant.api.admin_auth import is_admin_authenticated
+from skin_assistant.api.ws_manager import ws_manager
 from skin_assistant.config import get_settings
 from skin_assistant.domain.schemas import (
+    AdminReplyRequest,
+    AdminReplyResponse,
+    ChatHistoryResponse,
+    ChatMessageOut,
     ChatRequest,
     ChatResponse,
+    ChatSessionsResponse,
+    ChatSessionSummary,
     ChatWithImageResponse,
     ChatLogRequest,
     FeedbackRequest,
@@ -19,11 +29,30 @@ from skin_assistant.domain.schemas import (
 )
 from skin_assistant.infrastructure import KnowledgeRepository, ChatRepository
 from skin_assistant.services import ChatService
+from skin_assistant.services.chat_options import get_suggested_options
+
+from skin_assistant.api.ws_routes import router as ws_router
 
 router = APIRouter(prefix="/v1", tags=["skin-assistant"])
+router.include_router(ws_router)
+
 _repo = KnowledgeRepository()
+
 _chat = ChatService(repo=_repo)
 _chat_repo = ChatRepository()
+
+
+def _require_admin(admin_key: Optional[str]) -> None:
+    if not is_admin_authenticated(admin_key):
+        raise HTTPException(status_code=401, detail="Invalid or missing admin key")
+
+
+def _admin_key_from(
+    query_key: Optional[str],
+    header_key: Optional[str],
+    body_key: Optional[str] = None,
+) -> Optional[str]:
+    return (body_key or header_key or query_key or "").strip() or None
 
 
 def _condition_from_image_analysis(image_analysis: str) -> str:
@@ -93,8 +122,113 @@ def chat(req: ChatRequest) -> ChatResponse:
         _chat_repo.save_message(
             req.session_id, "assistant", reply,
             user_id=req.user_id, user_email=req.user_email, user_name=req.user_name,
+            is_ai_response=True,
         )
-    return ChatResponse(reply=reply)
+    options = get_suggested_options(req.message, reply)
+    admin_connected = (
+        ws_manager.is_admin_connected(req.session_id) if req.session_id else None
+    )
+    return ChatResponse(
+        reply=reply,
+        options=options,
+        session_id=req.session_id,
+        admin_connected=admin_connected,
+    )
+
+
+@router.get("/chat/sessions", response_model=ChatSessionsResponse)
+def list_chat_sessions(
+    limit: int = Query(50, ge=1, le=200),
+    admin_key: Optional[str] = Query(None, description="Admin API key (or use X-Admin-Key header)."),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+) -> ChatSessionsResponse:
+    """List recent chat sessions for admin dashboards (requires admin key when configured)."""
+    _require_admin(_admin_key_from(admin_key, x_admin_key))
+    if not _chat_repo.is_available():
+        raise HTTPException(status_code=503, detail="Chat database is not configured (set MYSQL_* in .env).")
+    rows = _chat_repo.list_sessions(limit=limit)
+    sessions = [
+        ChatSessionSummary(
+            session_id=r.get("session_id") or "",
+            user_id=r.get("user_id"),
+            user_email=r.get("user_email"),
+            user_name=r.get("user_name"),
+            session_created_at=str(r["session_created_at"]) if r.get("session_created_at") else None,
+            last_message=r.get("last_message"),
+            last_message_at=str(r["last_message_at"]) if r.get("last_message_at") else None,
+            last_message_role=r.get("last_message_role"),
+            last_message_sender=r.get("last_message_sender"),
+        )
+        for r in rows
+    ]
+    return ChatSessionsResponse(count=len(sessions), sessions=sessions)
+
+
+@router.get("/chat/sessions/{session_id}/history", response_model=ChatHistoryResponse)
+def get_chat_history(
+    session_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    admin_key: Optional[str] = Query(None),
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+) -> ChatHistoryResponse:
+    """Return full chat history for a session (admin / backend integration)."""
+    _require_admin(_admin_key_from(admin_key, x_admin_key))
+    if not _chat_repo.is_available():
+        raise HTTPException(status_code=503, detail="Chat database is not configured (set MYSQL_* in .env).")
+    rows = _chat_repo.get_history(session_id, limit=limit)
+    messages = [
+        ChatMessageOut(
+            role=r.get("role") or "user",
+            content=r.get("content") or "",
+            created_at=str(r["created_at"]) if r.get("created_at") else None,
+            is_ai_response=bool(r.get("is_ai_response")) if r.get("is_ai_response") is not None else None,
+            sender=r.get("sender"),
+            image_analysis=r.get("image_analysis"),
+        )
+        for r in rows
+    ]
+    return ChatHistoryResponse(session_id=session_id, messages=messages)
+
+
+@router.post("/chat/admin-reply", response_model=AdminReplyResponse)
+async def admin_reply(
+    req: AdminReplyRequest,
+    x_admin_key: Optional[str] = Header(None, alias="X-Admin-Key"),
+) -> AdminReplyResponse:
+    """
+    Admin sends a reply to a user session (for Spring/backend integration).
+    Saves to MySQL and pushes to the user WebSocket when connected.
+    """
+    _require_admin(_admin_key_from(None, x_admin_key, req.admin_key))
+    message_id = str(uuid.uuid4())
+    saved = False
+    if _chat_repo.is_available():
+        saved = _chat_repo.save_message(
+            req.session_id,
+            "assistant",
+            req.content,
+            user_id=req.user_id,
+            user_email=req.user_email,
+            user_name=req.user_name,
+            from_admin=True,
+        )
+    delivered = await ws_manager.send_json(
+        req.session_id,
+        "user",
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": req.content,
+            "message_id": message_id,
+            "sender": "admin",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    return AdminReplyResponse(
+        saved=saved,
+        delivered_via_websocket=delivered,
+        message_id=message_id,
+    )
 
 
 @router.post("/chat/with-image", response_model=ChatWithImageResponse)
@@ -316,9 +450,13 @@ def list_routes() -> dict:
     return {
         "base": base,
         "chat": {
-            "post_chat": f"POST {base}/chat (body: message, session_id?, user_id?, user_email?, user_name? for logged-in user)",
+            "post_chat": f"POST {base}/chat (body: message, session_id?, user_id?, user_email?, user_name?; response includes options[])",
             "post_chat_with_image": f"POST {base}/chat/with-image (multipart: message, session_id?, user_id?, user_email?, user_name?, image)",
             "post_chat_log": f"POST {base}/chat/log",
+            "get_chat_sessions": f"GET {base}/chat/sessions?admin_key=... (admin: list sessions)",
+            "get_chat_history": f"GET {base}/chat/sessions/{{session_id}}/history?admin_key=...",
+            "post_admin_reply": f"POST {base}/chat/admin-reply (admin: reply to user session)",
+            "websocket_chat": f"WS {base}/ws/chat/{{session_id}}?role=user|admin&admin_key=...",
         },
         "feedback": {"post_feedback": f"POST {base}/feedback"},
         "ingredients": {

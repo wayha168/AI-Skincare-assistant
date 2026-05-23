@@ -24,6 +24,61 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     reply: str
+    options: list[str] = Field(
+        default_factory=list,
+        description="Quick-reply suggestions for the client UI (chips/buttons).",
+    )
+    session_id: Optional[str] = None
+    admin_connected: Optional[bool] = Field(
+        None,
+        description="When session_id is set: true if an admin is live on WebSocket for this session.",
+    )
+
+
+class ChatMessageOut(BaseModel):
+    role: str
+    content: str
+    created_at: Optional[str] = None
+    is_ai_response: Optional[bool] = None
+    sender: Optional[str] = None
+    image_analysis: Optional[str] = None
+
+
+class ChatHistoryResponse(BaseModel):
+    session_id: str
+    messages: list[ChatMessageOut]
+
+
+class ChatSessionSummary(BaseModel):
+    session_id: str
+    user_id: Optional[str] = None
+    user_email: Optional[str] = None
+    user_name: Optional[str] = None
+    session_created_at: Optional[str] = None
+    last_message: Optional[str] = None
+    last_message_at: Optional[str] = None
+    last_message_role: Optional[str] = None
+    last_message_sender: Optional[str] = None
+
+
+class ChatSessionsResponse(BaseModel):
+    count: int
+    sessions: list[ChatSessionSummary]
+
+
+class AdminReplyRequest(BaseModel):
+    session_id: str = Field(..., min_length=1, max_length=128)
+    content: str = Field(..., min_length=1, max_length=4000)
+    admin_key: Optional[str] = Field(None, description="Required when WS_ADMIN_KEY / ADMIN_API_KEY is set.")
+    user_id: Optional[str] = Field(None, max_length=36)
+    user_email: Optional[str] = Field(None, max_length=255)
+    user_name: Optional[str] = Field(None, max_length=255)
+
+
+class AdminReplyResponse(BaseModel):
+    saved: bool
+    delivered_via_websocket: bool
+    message_id: str
 
 
 class ChatWithImageResponse(BaseModel):

@@ -200,6 +200,9 @@ class ChatRepository:
         user_id: Optional[str] = None,
         user_email: Optional[str] = None,
         user_name: Optional[str] = None,
+        *,
+        from_admin: bool = False,
+        is_ai_response: Optional[bool] = None,
     ) -> bool:
         """
         Append one chat message to chat_ai. Creates session if needed.
@@ -211,10 +214,19 @@ class ChatRepository:
         if not uid:
             return False
         role_lower = (role or "").strip().lower()
-        is_ai = 1 if role_lower == "assistant" else 0
-        if role_lower == "assistant":
+        if from_admin:
+            is_ai = 0
+            sender = "admin"
+        elif is_ai_response is not None:
+            is_ai = 1 if is_ai_response else 0
+            sender = "assistant" if role_lower == "assistant" else (
+                (user_email or "").strip()[:255] or (user_id or "").strip()[:255] or "user"
+            )
+        elif role_lower == "assistant":
+            is_ai = 1
             sender = "assistant"
         else:
+            is_ai = 0
             sender = (user_email or "").strip()[:255] or (user_id or "").strip()[:255] or "user"
         conn = self._conn()
         if conn is None:
@@ -258,8 +270,47 @@ class ChatRepository:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT role, content, image_analysis, image_path, image_filename, training_label, created_at FROM chat_ai WHERE session_id = %s ORDER BY id ASC LIMIT %s",
+                    "SELECT role, content, image_analysis, image_path, image_filename, training_label, is_ai_response, sender, created_at FROM chat_ai WHERE session_id = %s ORDER BY id ASC LIMIT %s",
                     (session_id[:128], limit),
+                )
+                rows = cur.fetchall()
+            return [dict(r) for r in rows]
+        except Exception:
+            return []
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def list_sessions(self, limit: int = 50) -> List[dict]:
+        """Recent chat sessions for admin dashboards (newest activity first)."""
+        conn = self._conn()
+        if conn is None:
+            return []
+        try:
+            _ensure_tables(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        cs.session_id,
+                        cs.user_id,
+                        cs.user_email,
+                        cs.user_name,
+                        cs.created_at AS session_created_at,
+                        last_msg.content AS last_message,
+                        last_msg.created_at AS last_message_at,
+                        last_msg.role AS last_message_role,
+                        last_msg.sender AS last_message_sender
+                    FROM chat_sessions cs
+                    LEFT JOIN chat_ai last_msg ON last_msg.id = (
+                        SELECT MAX(id) FROM chat_ai WHERE session_id = cs.session_id
+                    )
+                    ORDER BY last_msg.created_at DESC, cs.created_at DESC
+                    LIMIT %s
+                    """,
+                    (max(1, min(limit, 200)),),
                 )
                 rows = cur.fetchall()
             return [dict(r) for r in rows]
