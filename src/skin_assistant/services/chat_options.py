@@ -5,23 +5,23 @@ from typing import List
 
 
 _DEFAULT_OPTIONS = [
-    "Recommend products for dry skin",
+    "Ask about skin concerns",
     "What is niacinamide?",
-    "Products for acne-prone skin",
+    "Ask about acne solutions",
     "I need help choosing skincare",
 ]
 
 _GREETING_OPTIONS = [
-    "Recommend products for dry skin",
-    "What is hyaluronic acid?",
+    "How can I help you with your skin?",
+    "What ingredients are good for skin tone?",
     "I have sensitive skin",
     "Connect me with support",
 ]
 
 _INGREDIENT_OPTIONS = [
-    "Products containing this ingredient",
-    "Recommend for oily skin",
-    "Recommend for dry skin",
+    "What does this ingredient do?",
+    "Which skin types is it good for?",
+    "Who should avoid this ingredient?",
     "Another skincare question",
 ]
 
@@ -48,13 +48,10 @@ def get_suggested_options(user_message: str, reply: str = "") -> List[str]:
         w in combined
         for w in (
             "recommend",
+            "suggest",
             "product",
-            "dry skin",
-            "oily",
-            "acne",
-            "sensitive",
-            "budget",
-            "$",
+            "show",
+            "options",
         )
     ):
         return _PRODUCT_OPTIONS[:4]
@@ -62,7 +59,7 @@ def get_suggested_options(user_message: str, reply: str = "") -> List[str]:
     if any(w in msg for w in ("admin", "human", "support", "agent", "staff", "person")):
         return [
             "Connect me with support",
-            "Recommend products for my skin",
+            "Ask about skin concerns",
             "What is niacinamide?",
             "I have another question",
         ]
