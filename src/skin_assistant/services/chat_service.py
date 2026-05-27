@@ -16,7 +16,7 @@ def _normalize_assistant_plain_text(text: str) -> str:
 
 
 # Khmer script (Unicode Khmer + Khmer Symbols) — for language detection
-_KHMER_SCRIPT_RE = re.compile(r"[\u1780-\u17FF\u19E0-\u19FF]")
+_KHMER_SCRIPT_RE = re.compile(r"[\u1780-\u17FF\u19E0-\u19FAF]")
 
 
 def _message_uses_khmer(text: str) -> bool:
@@ -596,10 +596,10 @@ class ChatService:
                     names = [h.get("name") for h in ing_hits[:3] if h.get("name")]
                     if names:
                         return (
-                            "That sounds really uncomfortable. I'm not a medical professional, but people often look into "
-                            f"ingredients like {', '.join(names)} for concerns like yours. "
-                            "If it doesn't settle, a dermatologist can help you figure out what's going on."
-                        )
+                            "That sounds really uncomfortable. I can’t diagnose, but I can help you choose gentle, supportive ingredients. "
+                        f"People often look into {', '.join(names)} for concerns like yours. "
+                        "If it doesn’t settle or gets worse, seeing a dermatologist is the right next step."
+                    )
                 if parts:
                     if cf and prod_hits:
                         intro = "That sounds rough—skin can be really sensitive to change.\n\n"
@@ -655,10 +655,19 @@ class ChatService:
                         return "\n\n".join(_format_ingredient(h) for h in hits)
                 break
 
+        # If the user asks for recommendations without naming a specific concern (or with an awkward phrasing),
+        # ask 1 short question instead of going into generic ingredient dumps.
+        if _is_recommendation_request(user_message) and not _detect_concern_type(user_message):
+            return (
+                "Got it. To recommend the right products, what’s your main concern—dryness, acne/blemishes, oiliness, sensitivity/redness, "
+                "or something else? Also, is it mostly on your face or body?"
+            )
+
         # Vague skin problem — ask what type of problem (like a real person would)
         followup = _get_concern_followup(user_message, history)
         if followup:
             return followup
+
 
         # Products for concern — ingredients from all datasets; SkinMe products matched to those ingredients + concern
         # Only search for products if user explicitly asked for recommendations
@@ -720,8 +729,8 @@ class ChatService:
                 if names:
                     return (
                         "Thanks for trusting me with that—skin can be really stressful when it acts up. "
-                        "I'm not a medical professional, but ingredients like "
-                        f"{', '.join(names)} often come up when people talk about this. "
+                        "I can’t diagnose, but ingredients like "
+                        f"{', '.join(names)} are often used as gentle support for concerns like this. "
                         "If it keeps bothering you or gets worse, a dermatologist is the right person to check it properly."
                     )
             if parts:
@@ -758,9 +767,9 @@ class ChatService:
                 if names:
                     return (
                         "It sounds like your skin has been giving you a hard time. "
-                        "I'm not a doctor, but people sometimes read about ingredients "
-                        f"like {', '.join(names)} when they're dealing with something like that. "
-                        "If you tell me a bit more—or if you want product ideas—I'm happy to help."
+                        "I can’t diagnose, but people often look into ingredients "
+                        f"like {', '.join(names)} for concerns like this. "
+                        "If you tell me a bit more—or if you want product ideas—I’m happy to help."
                     )
             return "Here's what I found on that:\n\n" + "\n\n".join(_format_ingredient(h) for h in ing_hits)
 

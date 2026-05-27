@@ -2,6 +2,7 @@
 Persist chat messages to MySQL (skinme_db). Uses same MYSQL_* env as SkinMeDBClient.
 Creates chat_sessions and chat_ai tables. Generates a user UUID per session if not provided (same session = same user).
 """
+import os
 import uuid
 from typing import List, Optional
 

@@ -131,6 +131,25 @@ async def chat_ws(websocket: WebSocket, session_id: str):
                         user_name=user_name,
                         from_admin=True,
                     )
+                # Forward to backend for persistence (Spring)
+                try:
+                    from skin_assistant.config import get_settings
+                    from skin_assistant.api.routes import _forward_to_backend
+                    _forward_to_backend(
+                        "/api/v1/chat/log",
+                        {
+                            "session_id": session_id,
+                            "role": "assistant",
+                            "content": content,
+                            "sender": "admin",
+                            "user_id": user_id,
+                            "user_email": user_email,
+                            "user_name": user_name,
+                            "from_admin": True,
+                        },
+                    )
+                except Exception:
+                    pass
                 continue
 
             # User message
@@ -181,6 +200,38 @@ async def chat_ws(websocket: WebSocket, session_id: str):
                     user_name=user_name,
                     is_ai_response=True,
                 )
+
+            # Forward to backend for persistence (Spring)
+            try:
+                from skin_assistant.api.routes import _forward_to_backend
+                _forward_to_backend(
+                    "/api/v1/chat/log",
+                    {
+                        "session_id": session_id,
+                        "role": "user",
+                        "content": content,
+                        "sender": "user",
+                        "user_id": user_id,
+                        "user_email": user_email,
+                        "user_name": user_name,
+                        "is_ai_response": False,
+                    },
+                )
+                _forward_to_backend(
+                    "/api/v1/chat/log",
+                    {
+                        "session_id": session_id,
+                        "role": "assistant",
+                        "content": reply,
+                        "sender": "assistant",
+                        "user_id": user_id,
+                        "user_email": user_email,
+                        "user_name": user_name,
+                        "is_ai_response": True,
+                    },
+                )
+            except Exception:
+                pass
 
             await ws_manager.send_json(session_id, "user", assistant_payload)
 

@@ -1,11 +1,16 @@
 """Application settings and paths."""
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+
+# Load .env from project root
+root = Path(__file__).resolve().parents[3]  # config -> skin_assistant -> src -> project root
+load_dotenv(root / '.env')
 
 
 def get_settings():
     """Return settings object (paths + optional backend URL and MySQL for DB integration)."""
-    root = Path(__file__).resolve().parents[3]  # config -> skin_assistant -> src -> project root
     # Spring (or other) backend URL for saving data to database; e.g. http://localhost:8080
     backend_url = os.environ.get("SPRING_BACKEND_URL") or os.environ.get("BACKEND_WEBHOOK_URL") or ""
     # Optional: MySQL (skinme_db) for product lookups when "use database" is enabled in chat
@@ -16,6 +21,10 @@ def get_settings():
     mysql_database = os.environ.get("MYSQL_DATABASE", "").strip()
     mysql_products_table = os.environ.get("MYSQL_PRODUCTS_TABLE", "product").strip() or "product"
     use_mysql_db = bool(mysql_host and mysql_user and mysql_database)
+    # Override with CHAT_USE_CSV_ONLY if set to true (case-insensitive)
+    chat_use_csv_only = os.environ.get("CHAT_USE_CSV_ONLY", "").lower()
+    if chat_use_csv_only == "true":
+        use_mysql_db = False
     # Product JSON API (same data as storefront; default is proxied on skinme.store)
     skinme_api_url = (
         os.environ.get("SKINME_API_URL", "").strip()
