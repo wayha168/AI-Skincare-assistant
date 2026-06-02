@@ -346,16 +346,24 @@ async def chat_with_image(
                 product_type = p.get('product_type', '')
                 price = p.get('price', '')
                 product_id = p.get('product_id') or p.get('id')
+                details_url = f"https://skinme.store/product_details?productId={product_id}" if product_id else ""
                 
-                line = f"• {product_name}"
+                # Build the markdown for this product
+                parts = []
+                # We don't have an image URL in this context, so skip image
+                # Add the product name as a link
+                if details_url:
+                    parts.append(f"[{product_name}]({details_url})")
+                else:
+                    parts.append(product_name)
+                
+                # Add type and price
                 if product_type:
-                    line += f" ({product_type})"
+                    parts[-1] += f" ({product_type})"
                 if price:
-                    line += f" — {price}"
-                if product_id:
-                    line += f" — [View Details](https://skinme.store/product_details?productId={product_id})"
+                    parts[-1] += f" — {price}"
                 
-                product_section += line + "\n"
+                product_section += "• " + " ".join(parts) + "\n"
             
             reply += product_section
     

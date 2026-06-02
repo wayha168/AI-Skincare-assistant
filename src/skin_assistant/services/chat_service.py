@@ -289,19 +289,32 @@ def _format_product(prod: dict) -> str:
     name = prod.get("product_name", "Unknown")
     ptype = prod.get("product_type", "")
     price = prod.get("price", "")
-    url = prod.get("product_url", "")
+    url = prod.get("product_url", "")  # assuming this is the image URL
     details_url = prod.get("product_details_url", "")
     
-    line = f"• {name}"
-    if ptype:
-        line += f" ({ptype})"
-    if price:
-        line += f" — {price}"
+    parts = []
+    
+    # If we have an image URL, add the image
+    if url:
+        parts.append(f"![{name}]({url})")
+    
+    # Now, the product name as a link to the details page
     if details_url:
-        line += f" — [View Details]({details_url})"
-    elif url:
-        line += f" — {url}"
-    return line
+        parts.append(f"[{name}]({details_url})")
+    else:
+        parts.append(name)
+    
+    # Add type and price to the same line as the name
+    if ptype or price:
+        # We'll append to the last part
+        last_part = parts[-1]
+        if ptype:
+            last_part += f" ({ptype})"
+        if price:
+            last_part += f" — {price}"
+        parts[-1] = last_part
+    
+    return "\n".join(parts)
 
 
 def _is_short_affirmation(text: str) -> bool:
