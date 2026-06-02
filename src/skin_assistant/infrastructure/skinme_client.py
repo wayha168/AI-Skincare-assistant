@@ -174,26 +174,21 @@ def sync_products_to_csv(
     overwrite_existing: bool = False,
 ) -> dict:
     """
-    Fetch products from API when needed. If overwrite_existing=False and a non-empty CSV
-    already exists, skips the network call entirely.
-
-    Write CSV when: overwrite_existing=True, or no CSV, or CSV is empty — and fetch succeeds.
-
+    Fetch products from API and sync to CSV with intelligent merging.
+    
+    When overwrite_existing=False and CSV exists:
+    - Fetches from backend
+    - Merges: keeps existing products (by ID), adds new ones automatically
+    - Avoids re-scraping existing products while ensuring new products are added
+    
+    When overwrite_existing=True:
+    - Fetches and overwrites entire CSV (full refresh)
+    
     Returns stats: total, added, removed, path, skipped, optional error/message.
     """
     settings = get_settings()
     csv_path = csv_path or settings.skinme_products_path
     old_df = load_existing_csv(csv_path)
-
-    if not overwrite_existing and csv_path.exists() and not old_df.empty:
-        return {
-            "total": len(old_df),
-            "added": 0,
-            "removed": 0,
-            "path": str(csv_path),
-            "skipped": True,
-            "message": "CSV already exists; left as-is. Run sync with overwrite to refresh.",
-        }
 
     try:
         products = fetch_products(api_url=api_url)
@@ -225,11 +220,43 @@ def sync_products_to_csv(
     added = len(new_ids - old_ids)
     removed = len(old_ids - new_ids)
 
-    products_to_csv(products, csv_path)
-    return {
-        "total": len(products),
-        "added": added,
-        "removed": removed,
-        "path": str(csv_path),
-        "skipped": False,
-    }
+    # Smart merge: if overwrite_existing=False and we have existing data, merge instead of overwrite
+    if not overwrite_existing and not old_df.empty and "id" in old_df.columns:
+        # Keep existing products, add new ones
+        existing_ids_set = set(old_df["id"].astype(str).unique())
+        new_products = [p for p in products if str(p["id"]) not in existing_ids_set]
+        
+        if new_products:
+            # Convert to DataFrame and merge
+            new_df = pd.DataFrame(new_products)
+            merged_df = pd.concat([old_df, new_df], ignore_index=True)
+            merged_df = rewrite_skinme_product_image_urls(merged_df)
+            merged_df.to_csv(csv_path, index=False)
+            return {
+                "total": len(merged_df),
+                "added": len(new_products),
+                "removed": 0,
+                "path": str(csv_path),
+                "skipped": False,
+                "message": f"Merged: kept {len(old_df)} existing products, added {len(new_products)} new ones.",
+            }
+        else:
+            # No new products, return early
+            return {
+                "total": len(old_df),
+                "added": 0,
+                "removed": 0,
+                "path": str(csv_path),
+                "skipped": True,
+                "message": "No new products found. Keeping existing data.",
+            }
+    else:
+        # Full overwrite mode
+        products_to_csv(products, csv_path)
+        return {
+            "total": len(products),
+            "added": added,
+            "removed": removed,
+            "path": str(csv_path),
+            "skipped": False,
+        }

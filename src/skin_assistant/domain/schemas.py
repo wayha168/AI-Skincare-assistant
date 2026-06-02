@@ -129,6 +129,8 @@ class ProductOut(BaseModel):
     product_type: Optional[str] = None
     product_url: Optional[str] = None
     price: Optional[str] = None
+    product_id: Optional[int] = None
+    product_details_url: Optional[str] = None
 
 
 class SearchIngredientsResponse(BaseModel):

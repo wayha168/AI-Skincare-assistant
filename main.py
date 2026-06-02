@@ -1,16 +1,21 @@
 """
 Skin Assistant — entry point.
-  python main.py                    # sync from backend (leave existing data), then run API
+  python main.py                    # smart sync (auto-add new products, keep existing), then run API
   python main.py --no-sync-on-start # run API without syncing on startup
-  python main.py sync               # sync from backend; existing CSV/images left as-is
-  python main.py sync --overwrite   # sync and overwrite existing CSV with latest from backend
+  python main.py sync               # smart sync: keep existing products, auto-add new ones from backend
+  python main.py sync --no-download # sync without downloading images
   python main.py chat               # run AI chatbot in console (interactive; same backend as API)
   python main.py chat "message"      # single message: print reply and exit (for testing)
   python main.py train              # train intent model
   python main.py train-products [--image]  # train product text (+ image) models
   python main.py train-skin-condition       # train skin condition classifier from images
 
-  On serve, product data is synced from backend (backend.skinme.store); if CSV/images already exist they are left as-is.
+  Smart Sync (merge mode):
+  - Keeps existing products in CSV (no re-scraping)
+  - Automatically detects and adds new products from backend
+  - Runs on startup (python main.py) and explicitly (python main.py sync)
+  - Efficient: only fetches to check for new products, doesn't re-process existing ones
+  
   Console chat uses the same ChatService as the API (ingredients, product recommendations, optional LLM/DB).
   Optional MySQL (skinme_db): chat logs when MYSQL_* is set; use --use-database to merge DB products with scraped skinme_products.csv.
 """
@@ -319,11 +324,11 @@ def main() -> int:
     parser.add_argument(
         "--no-sync-on-start",
         action="store_true",
-        help="serve: do not sync from backend on startup (default is to sync; existing CSV/images left as-is)",
+        help="serve: do not sync from backend on startup (default is smart sync: keep existing products, auto-add new ones)",
     )
     parser.add_argument("--no-download", action="store_true", help="sync: skip image download")
     parser.add_argument("--no-cleanup", action="store_true", help="sync: skip deleting unused images")
-    parser.add_argument("--overwrite", action="store_true", help="sync: overwrite existing CSV; default is to leave existing data")
+    parser.add_argument("--overwrite", action="store_true", help="sync: (deprecated — smart sync now auto-detects changes)")
     parser.add_argument("--no-llm", action="store_true", dest="chat_no_llm", help="chat: use retrieval only (no Gemini)")
     parser.add_argument(
         "--use-database",
@@ -368,12 +373,12 @@ def main() -> int:
         )
     if args.command == "serve":
         if not args.no_sync_on_start:
-            print_section("Sync from backend", "-")
-            print_info("Syncing product data from backend (existing CSV/images left as-is)...")
+            print_section("Smart Sync from backend", "-")
+            print_info("Auto-detecting new products (keeping existing ones, no re-scraping)...")
             if run_sync(
                 no_download=args.no_download,
                 no_cleanup=args.no_cleanup,
-                overwrite_existing=False,
+                overwrite_existing=False,  # Merge mode: keep existing, auto-add new
             ) != 0:
                 print_warning("Sync had errors; starting API anyway.")
             print_success("Sync finished")
@@ -385,7 +390,7 @@ def main() -> int:
         return run_sync(
             no_download=args.no_download,
             no_cleanup=args.no_cleanup,
-            overwrite_existing=args.overwrite,
+            overwrite_existing=False,  # Merge mode: keep existing products, auto-add new ones
         )
     if args.command == "train":
         return run_train()

@@ -8,12 +8,19 @@ from skin_assistant.config import get_settings
 
 
 def _row_to_product(row: dict) -> dict:
-    """Map DB row (camelCase or snake_case) to API shape: product_name, product_type, price, product_url."""
+    """Map DB row (camelCase or snake_case) to API shape: product_name, product_type, price, product_url, product_id, product_details_url."""
+    product_id = row.get("id") or row.get("product_id")
+    product_details_url = None
+    if product_id:
+        product_details_url = f"https://skinme.store/product_details?productId={product_id}"
+    
     return {
         "product_name": row.get("product_name") or row.get("name"),
         "product_type": row.get("product_type") or row.get("productType"),
         "price": str(row.get("price") or ""),
         "product_url": row.get("product_url") or row.get("image_url") or row.get("imageUrl") or "",
+        "product_id": product_id,
+        "product_details_url": product_details_url,
     }
 
 

@@ -360,11 +360,17 @@ class KnowledgeRepository:
         matched = self._mask_concern_on_search_text(subset, concern)
         out = []
         for _, row in matched.head(top_k).iterrows():
+            product_id = row.get("id")
+            product_details_url = None
+            if product_id:
+                product_details_url = f"https://skinme.store/product_details?productId={product_id}"
             out.append({
                 "product_name": row.get("name"),
                 "product_type": row.get("productType"),
                 "price": str(row.get("price", "")),
                 "product_url": row.get("image_url") or "",
+                "product_id": product_id,
+                "product_details_url": product_details_url,
                 "_source": "skinme_products.csv",
             })
         return out
@@ -695,11 +701,17 @@ class KnowledgeRepository:
                     if len(t) >= 3:
                         mask = mask | df["_search_text"].str.contains(re.escape(t), na=False)
             for _, row in df[mask].head(top_k).iterrows():
+                product_id = row.get("id")
+                product_details_url = None
+                if product_id:
+                    product_details_url = f"https://skinme.store/product_details?productId={product_id}"
                 pool.append({
                     "product_name": row.get("name"),
                     "product_type": row.get("productType"),
                     "price": str(row.get("price", "")),
                     "product_url": row.get("image_url") or "",
+                    "product_id": product_id,
+                    "product_details_url": product_details_url,
                 })
         if use_database:
             db = self._mysql()

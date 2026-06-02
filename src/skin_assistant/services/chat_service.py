@@ -290,12 +290,16 @@ def _format_product(prod: dict) -> str:
     ptype = prod.get("product_type", "")
     price = prod.get("price", "")
     url = prod.get("product_url", "")
+    details_url = prod.get("product_details_url", "")
+    
     line = f"• {name}"
     if ptype:
         line += f" ({ptype})"
     if price:
         line += f" — {price}"
-    if url:
+    if details_url:
+        line += f" — [View Details]({details_url})"
+    elif url:
         line += f" — {url}"
     return line
 
@@ -924,77 +928,6 @@ class ChatService:
         return self.reply_with_retrieval(
             user_message, use_database=use_database, conversation_history=conversation_history
         )
-        try:
-            from google import genai as google_genai
-            from google.genai import types as genai_types
-        except Exception:
-            return self.reply_with_retrieval(
-                user_message, use_database=use_database, conversation_history=conversation_history
-            )
-
-        query_for_search = (retrieval_query or user_message).strip() or user_message
-        search_query = _search_text_for_knowledge(query_for_search, conversation_history)
-        concern_type = _detect_concern_type(search_query)
-        # Only search for products if user explicitly asked for recommendations
-        should_search_products = use_database or _is_recommendation_request(user_message) or _is_recommendation_request(search_query)
-        use_db = should_search_products  # Define use_db here
-        ing_hits = self._repo.search_ingredients(search_query, 6)
-        prod_hits = []
-        if should_search_products:
-            prod_hits = self._repo.search_skinme_products_for_chat_context(
-                search_query, ing_hits, product_type=concern_type, top_k=24, use_database=use_db
-            )
-            prod_hits = _filter_products_for_user_problem(prod_hits, search_query)
-        concern_first = _concern_first_message(user_message)
-        max_price_llm = _parse_budget(user_message)
-        budget_note = ""
-        if max_price_llm is not None and prod_hits:
-            within = _filter_products_by_price(prod_hits, max_price_llm)
-            if within:
-                prod_hits = within[:8]
-                budget_note = f"Budget: prefer products around ${max_price_llm:.0f} or less."
-            else:
-                def _pv_llm(p: dict) -> float:
-                    try:
-                        return float(p.get("price") or 999)
-                    except (ValueError, TypeError):
-                        return 999.0
-                priced = [p for p in prod_hits if p.get("price") not in (None, "")]
-                prod_hits = sorted(priced, key=_pv_llm)[:5] if priced else prod_hits[:5]
-                budget_note = (
-                    f"Budget: nothing in that range; below are the closest alternatives by price."
-                )
-        else:
-            prod_hits = prod_hits[:5] if prod_hits else []
-        context_parts = []
-        if ing_hits:
-            skip_ingredient_dump = concern_first and bool(prod_hits)
-            if skip_ingredient_dump:
-                pass
-            elif concern_first and not prod_hits:
-                names = [h.get("name") for h in ing_hits[:4] if h.get("name")]
-                if names:
-                    context_parts.append(
-                        "Ingredient names that sometimes come up for this kind of concern (for one short sentence in your reply, not a list): "
-                        + ", ".join(names)
-                    )
-            else:
-                context_parts.append(
-                    "Ingredient notes (for reference):\n"
-                    + "\n".join(
-                        f"- {h.get('name')}: {_stringify_ingredient_field(h.get('what_is_it', ''))[:200]} | "
-                        f"Benefits: {_stringify_ingredient_field(h.get('what_does_it_do', ''))[:200]} | "
-                        f"Good for: {_stringify_ingredient_field(h.get('who_is_it_good_for', ''))[:150]}"
-                        for h in ing_hits
-                    )
-                )
-        if prod_hits:
-            prod_lines = "\n".join(
-                f"- {p.get('product_name')} ({p.get('product_type')}) {p.get('price', '')}" for p in prod_hits
-            )
-            if budget_note:
-                prod_lines = budget_note + "\n" + prod_lines
-            context_parts.append("Products you may mention (names and prices must match this list exactly):\n" + prod_lines)
         context = "\n\n".join(context_parts) if context_parts else "No specific ingredients or products found."
 
         system = _LLM_SYSTEM_INSTRUCTION

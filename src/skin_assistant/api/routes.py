@@ -91,11 +91,18 @@ def _to_ingredient_out(d: dict) -> IngredientOut:
 
 
 def _to_product_out(d: dict) -> ProductOut:
+    product_id = d.get("product_id")
+    product_details_url = None
+    if product_id:
+        product_details_url = f"https://skinme.store/product_details?productId={product_id}"
+    
     return ProductOut(
         product_name=d.get("product_name"),
         product_type=d.get("product_type"),
         product_url=d.get("product_url"),
         price=d.get("price"),
+        product_id=product_id,
+        product_details_url=product_details_url,
     )
 
 
@@ -325,6 +332,33 @@ async def chat_with_image(
         retrieval_query=retrieval_query,
         llm_extra_instruction=llm_extra,
     )
+    
+    # When image analysis detects a condition, ensure products are shown with clickable links
+    if cond_label and use_llm:
+        # Search for products based on the detected condition
+        prod_hits = _repo.search_products_by_concern(
+            cond_label, product_type=None, top_k=5, use_database=use_database
+        )
+        if prod_hits:
+            product_section = "\n\n**Recommended products for your " + cond_label.lower() + " skin:**\n"
+            for p in prod_hits[:5]:
+                product_name = p.get('product_name', 'Unknown')
+                product_type = p.get('product_type', '')
+                price = p.get('price', '')
+                product_id = p.get('product_id') or p.get('id')
+                
+                line = f"• {product_name}"
+                if product_type:
+                    line += f" ({product_type})"
+                if price:
+                    line += f" — {price}"
+                if product_id:
+                    line += f" — [View Details](https://skinme.store/product_details?productId={product_id})"
+                
+                product_section += line + "\n"
+            
+            reply += product_section
+    
     if session_id and _chat_repo.is_available():
         user_content = (message or "Analyze my skin").strip() or "What do you recommend?"
         _chat_repo.save_message(
